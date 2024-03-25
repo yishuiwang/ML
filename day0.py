@@ -126,10 +126,10 @@ def stand_demo():
 
 if __name__ == "__main__":
     # datasets_demo()
-    # dict_demo()
+    dict_demo()
     # count_demo()
     # text = "今天天气真好，我想出去打球"
     # text = cut_word(text)
     # print(text)
     # count_chinese_demo2()
-    minmax_demo()
+    # minmax_demo()
