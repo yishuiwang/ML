@@ -1,0 +1,12 @@
+
+transformers/__pycache__/
+
+*.txt
+
+*.pt
+
+.vscode/
+
+transformers/
+
+data/
