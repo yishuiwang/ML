@@ -8,8 +8,8 @@ from transformers import AlbertTokenizer
 
 from transformers import *
 from transformers.modeling_albert import *
-from transformers.modeling_bert import *
 from torch.utils.data import RandomSampler, DataLoader,TensorDataset
+from torch.utils.data import SequentialSampler
 
 
 def select_field(features, field):
@@ -35,6 +35,7 @@ def convert_examples_to_features(
     features = []
 
     for example_index, example in enumerate(tqdm.tqdm(examples, desc="Converting examples to features")):
+        # 将问题和文章分词
         context_tokens = tokenizer.tokenize(example.context)
         start_ending_tokens = tokenizer.tokenize(example.question)
         # 使用预训练的语言模型（如BERT、RoBERTa等）进行文本处理时，输入的序列长度通常是固定的，
@@ -53,13 +54,19 @@ def convert_examples_to_features(
 
         choices_features = []
         for ending_index, ending in enumerate(example.endings):
+            # 将问题和选项拼接起来
             ending_tokens = start_ending_tokens + tokenizer.tokenize(ending)
             _truncate_seq_pair(context_tokens, ending_tokens, max_length - 3)
+            # 添加特殊标记符号，将问题、文章、选项拼接起来
+            # CLS classification 在文本开始处添加[CLS]标记符号，SEP separate 在每个文本之间添加[SEP]标记符号
             tokens = ["[CLS]"] + context_tokens + ["[SEP]"] + ending_tokens + ["[SEP]"]
+            # input_ids是将每个单词转换为一个ID
             input_ids = tokenizer.convert_tokens_to_ids(tokens)
             # 使用attention_mask 用于告知模型哪些部分是填充的、哪些部分是真实的文本内容的技术
             attention_mask = [1] * len(input_ids)
+            # token type ids 用于区分单词属于那个句子
             token_type_ids = [0] * (1 + len(context_tokens) + 1) + [1] * (len(ending_tokens) + 1)
+
             padding_length = max_length - len(input_ids)
             input_ids += [0] * padding_length
             attention_mask += [0] * padding_length
@@ -79,7 +86,7 @@ class InputExample:
         self.example_id = example_id
         self.question = question
         self.context = context
-        self.endings = endings
+        self.endings = endings  # 代表四个选项
         self.label = label
 
 
@@ -190,7 +197,6 @@ def load_dataset():
 
 def train(model, dataset, device):
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5)
-    loss_fn = torch.nn.CrossEntropyLoss()
 
     batch_size = 4
     train_sampler = RandomSampler(dataset)
@@ -208,32 +214,102 @@ def train(model, dataset, device):
             label = batch[3].to(device)
             inputs = {'input_ids': input_ids, 'attention_mask': attention_mask, 'token_type_ids': token_type_ids, 'labels': label}
 
-            outputs = model(**inputs)   # 前向传播
-            loss = outputs[0]
-            logits = outputs[1]
+            # 将文章、问题、选项拼接起来得到X，X本身乘以三个矩阵W 得到Q,K,V
+            # Attention(Q,K,V) = softmax(QK^T/sqrt(d_k))V
+            # 的到的结果再乘以一个矩阵W得到最终的输出
+            # 输出的第一个元素是loss，第二个元素是logits预测值
 
-            preds = None
-            if preds is None: 
-                preds = logits.detach().cpu().numpy()
-                out_label_ids = inputs['labels'].detach().cpu().numpy()
-            else:  
-                preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
-                out_label_ids = np.append(out_label_ids, inputs['labels'].detach().cpu().numpy(), axis=0)
+            # AlbertForMultipleChoice
+            # parameters:
+            # input_ids:
+                # Indices of input sequence tokens in the vocabulary.
+            # attention_mask: 
+                # Mask to avoid performing attention on padding token indices. Mask values selected in [0, 1]:
+                # 1 for tokens that are NOT MASKED, 0 for MASKED tokens.
+            # token_type_ids
+                # Segment token indices to indicate first and second portions of the inputs. Indices are selected in [0, 1]:
+                # 0 corresponds to a sentence A token, 1 corresponds to a sentence B token
+            # position_ids
+                # Indices of positions of each input sequence tokens in the position embeddings.
+            # labels
+                # Labels for computing the multiple choice classification loss. Indices should be in [0, ..., num_choices] where num_choices is the size of the second dimension of the input tensors.
+            # Return:
+            # loss (torch.FloatTensor of shape (1,), optional, returned when labels is provided):
+            # classification_scores (torch.FloatTensor of shape (batch_size, num_choices)):
+            outputs = model(**inputs)
+            loss = outputs[0]
+            preds = outputs[1].detach().cpu().numpy()
+            out_label_ids = inputs['labels'].detach().cpu().numpy()
+            # print("preds", preds)
+            # print("out_label_ids", out_label_ids)
+            # preds [[ 0.37252483  0.35667765  0.37862685  0.36976168]
+            #  [-0.03206023 -0.03527563 -0.04461297 -0.02163452]
+            #  [ 0.1736255   0.17404702  0.16252017  0.16390753]
+            #  [ 0.32777974  0.33433586  0.33356354  0.33603436]]
+            # out_label_ids [1 1 0 1]
+            
+            # 返回每行中最大值的索引
             preds = np.argmax(preds, axis=1)
+            # print("preds", preds)
+            # preds [2 3 1 3]
+            
+            # 比较预测值和标签值是否相等，mean()计算为True的比例
             acc = simple_accuracy(preds, out_label_ids)
 
             loss.backward() # 反向传播
             optimizer.step()    # 更新参数
             model.zero_grad()   # 梯度归零
 
+            if step % 100 == 0:
+                # 保存模型
+                print("Saving model")   
+                torch.save(model.state_dict(), "model.pth")
+
+
             print("Step", step, "Loss", loss.item(), "Accuracy", acc)
    
     return 0
+
+def evaluate(model, dataset, device):
+    model.eval()
+    eval_sampler = SequentialSampler(dataset)
+    dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=4)
+
+    preds = None
+    out_label_ids = None
+
+    for step, batch in enumerate(dataloader):
+        input_ids = batch[0].to(device)
+        attention_mask = batch[1].to(device)
+        token_type_ids = batch[2].to(device)
+        label = batch[3].to(device)
+        inputs = {'input_ids': input_ids, 'attention_mask': attention_mask, 'token_type_ids': token_type_ids, 'labels': label}
+
+        with torch.no_grad():
+            outputs = model(**inputs)
+            logits = outputs[1]
+
+        if preds is None:
+            preds = logits.detach().cpu().numpy()
+            out_label_ids = inputs['labels'].detach().cpu().numpy()
+        else:
+            preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
+            out_label_ids = np.append(out_label_ids, inputs['labels'].detach().cpu().numpy(), axis=0)
+
+    preds = np.argmax(preds, axis=1)
+    acc = simple_accuracy(preds, out_label_ids)
+
+    print("Accuracy", acc)
+
+    return 0
+
 
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using {} device".format(device))
+
+
     model = AlbertForMultipleChoice.from_pretrained("albert-base-v2")
 
     model.to(device)
