@@ -8,8 +8,8 @@ from transformers import AlbertTokenizer
 
 from transformers import *
 from transformers.modeling_albert import *
+from transformers.modeling_bert import *
 from torch.utils.data import RandomSampler, DataLoader,TensorDataset
-from torch.utils.data import SequentialSampler
 
 
 def select_field(features, field):
@@ -34,7 +34,7 @@ def convert_examples_to_features(
     lab_map = {label: i for i, label in enumerate(label_list)}
     features = []
 
-    for _, example in enumerate(tqdm.tqdm(examples, desc="Converting examples to features")):
+    for example_index, example in enumerate(tqdm.tqdm(examples, desc="Converting examples to features")):
         # 将问题和文章分词
         context_tokens = tokenizer.tokenize(example.context)
         start_ending_tokens = tokenizer.tokenize(example.question)
@@ -322,17 +322,6 @@ def evaluate(model, dataset, device):
 
     return 0
 
-def start_test():
-    # 从本地加载模型
-    model = AlbertForMultipleChoice.from_pretrained("model.pth")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-
-    # 加载测试数据
-    dataset = load_dataset(traning=False)
-
-    # 评估模型
-    evaluate(model, dataset, device)
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
