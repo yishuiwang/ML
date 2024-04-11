@@ -34,7 +34,7 @@ def convert_examples_to_features(
     lab_map = {label: i for i, label in enumerate(label_list)}
     features = []
 
-    for example_index, example in enumerate(tqdm.tqdm(examples, desc="Converting examples to features")):
+    for _, example in enumerate(tqdm.tqdm(examples, desc="Converting examples to features")):
         # 将问题和文章分词
         context_tokens = tokenizer.tokenize(example.context)
         start_ending_tokens = tokenizer.tokenize(example.question)
@@ -116,6 +116,22 @@ class RaceProcessor:
         middle_examples = self._read_data(middle_dir,"train")
         return high_examples + middle_examples
     
+    def get_dev_examples(self, data_dir):
+        """See base class."""
+        high_dir = os.path.join(data_dir, "dev/high")
+        middle_dir = os.path.join(data_dir, "dev/middle")
+        high_examples = self._read_data(high_dir,"dev")
+        middle_examples = self._read_data(middle_dir,"dev")
+        return high_examples + middle_examples
+    
+    def get_test_examples(self, data_dir):
+        """See base class."""
+        high_dir = os.path.join(data_dir, "test/high")
+        middle_dir = os.path.join(data_dir, "test/middle")
+        high_examples = self._read_data(high_dir,"test")
+        middle_examples = self._read_data(middle_dir,"test")
+        return high_examples + middle_examples
+    
     def _read_data(self, input_dir, set_type):
         """Read a json file into a list of examples."""
         examples = []
@@ -142,7 +158,7 @@ class RaceProcessor:
 
         return examples
 
-def load_dataset():
+def load_dataset(traning):
     cached_features_file = "features.pt"
     # 1. 获取features
     if os.path.exists(cached_features_file):
@@ -156,7 +172,10 @@ def load_dataset():
 
         # 获取训练数据 返回的是InputExample对象
         # InputExample对象包含了问题、文章、选项、答案等信息
-        train_examples = process.get_train_examples("RACE")
+        if traning:
+            train_examples = process.get_train_examples("RACE")
+        else:
+            train_examples = process.get_test_examples("RACE")
         print("Train examples: ", len(train_examples))
 
         # 获取训练标签
@@ -303,7 +322,17 @@ def evaluate(model, dataset, device):
 
     return 0
 
+def start_test():
+    # 从本地加载模型
+    model = AlbertForMultipleChoice.from_pretrained("model.pth")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
 
+    # 加载测试数据
+    dataset = load_dataset(traning=False)
+
+    # 评估模型
+    evaluate(model, dataset, device)
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -314,9 +343,10 @@ def main():
 
     model.to(device)
     # load_dataset()
-    dataset = load_dataset()
+    dataset = load_dataset(traning=True)
 
     train(model, dataset,device)
+
 
     return 0
 
