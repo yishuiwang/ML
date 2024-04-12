@@ -7,9 +7,12 @@ import tqdm
 from transformers import AlbertTokenizer
 
 from transformers import *
-from transformers.modeling_albert import *
-from transformers.modeling_bert import *
+# from transformers.modeling_albert import *
+# from transformers.modeling_bert import *
 from torch.utils.data import RandomSampler, DataLoader,TensorDataset
+from torch.utils.data import SequentialSampler
+
+from transformers.modeling_albert import AlbertForMultipleChoice
 
 
 def select_field(features, field):
@@ -160,6 +163,10 @@ class RaceProcessor:
 
 def load_dataset(traning):
     cached_features_file = "features.pt"
+    if traning:
+        cached_features_file = "train_" + cached_features_file
+    else:
+        cached_features_file = "test_" + cached_features_file
     # 1. 获取features
     if os.path.exists(cached_features_file):
         print("Loading features from cached file:", cached_features_file)
@@ -287,16 +294,23 @@ def train(model, dataset, device):
 
             print("Step", step, "Loss", loss.item(), "Accuracy", acc)
    
+    print("Finished training")
+
     return 0
 
-def evaluate(model, dataset, device):
-    model.eval()
+def evaluate(dataset, device):
+    print("Evaluating")
+
+    model = AlbertForMultipleChoice.from_pretrained("albert-base-v2")
+    model.to(device)
+    model.load_state_dict(torch.load("model.pth"))
+
+
+    batch_size = 4
     eval_sampler = SequentialSampler(dataset)
-    dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=4)
+    dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=batch_size)
 
-    preds = None
-    out_label_ids = None
-
+    total_acc, total_count = 0, 0
     for step, batch in enumerate(dataloader):
         input_ids = batch[0].to(device)
         attention_mask = batch[1].to(device)
@@ -304,21 +318,19 @@ def evaluate(model, dataset, device):
         label = batch[3].to(device)
         inputs = {'input_ids': input_ids, 'attention_mask': attention_mask, 'token_type_ids': token_type_ids, 'labels': label}
 
-        with torch.no_grad():
-            outputs = model(**inputs)
-            logits = outputs[1]
+        outputs = model(**inputs)
+        loss = outputs[0]
+        preds = outputs[1].detach().cpu().numpy()
+        out_label_ids = inputs['labels'].detach().cpu().numpy()
 
-        if preds is None:
-            preds = logits.detach().cpu().numpy()
-            out_label_ids = inputs['labels'].detach().cpu().numpy()
-        else:
-            preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
-            out_label_ids = np.append(out_label_ids, inputs['labels'].detach().cpu().numpy(), axis=0)
+        preds = np.argmax(preds, axis=1)
+        acc = simple_accuracy(preds, out_label_ids)
+        total_acc += acc * input_ids.size(0)
+        total_count += input_ids.size(0)
 
-    preds = np.argmax(preds, axis=1)
-    acc = simple_accuracy(preds, out_label_ids)
+        print("Step", step, "Loss", loss.item(), "Accuracy", acc)
 
-    print("Accuracy", acc)
+    print("Total accuracy", total_acc / total_count)
 
     return 0
 
@@ -335,6 +347,9 @@ def main():
     dataset = load_dataset(traning=True)
 
     train(model, dataset,device)
+
+    # dataset = load_dataset(traning=False)
+    # evaluate(dataset, device)
 
 
     return 0
