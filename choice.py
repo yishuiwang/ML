@@ -224,11 +224,13 @@ def load_dataset(traning):
 def train(model, dataset, device):
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5)
 
-    batch_size = 4
+    batch_size = 32
     train_sampler = RandomSampler(dataset)
     dataloader = DataLoader(dataset, sampler=train_sampler, batch_size=batch_size)
     
     model.zero_grad()
+
+    total_acc, total_count = 0, 0
 
     for epoch in range(2):
         print("Epoch", epoch)
@@ -282,6 +284,9 @@ def train(model, dataset, device):
             # 比较预测值和标签值是否相等，mean()计算为True的比例
             acc = simple_accuracy(preds, out_label_ids)
 
+            total_acc += acc * input_ids.size(0)
+            total_count += input_ids.size(0)
+
             loss.backward() # 反向传播
             optimizer.step()    # 更新参数
             model.zero_grad()   # 梯度归零
@@ -294,16 +299,17 @@ def train(model, dataset, device):
 
             print("Step", step, "Loss", loss.item(), "Accuracy", acc)
    
+    print("Total accuracy", total_acc / total_count)
     print("Finished training")
 
     return 0
 
-def evaluate(dataset, device):
+def evaluate(dataset, device, model):
     print("Evaluating")
 
-    model = AlbertForMultipleChoice.from_pretrained("albert-base-v2")
-    model.to(device)
-    model.load_state_dict(torch.load("model.pth"))
+    # model = AlbertForMultipleChoice.from_pretrained("albert-base-v2")
+    # model.to(device)
+    # model.load_state_dict(torch.load("model.pth"))
 
 
     batch_size = 4
@@ -340,17 +346,17 @@ def main():
     print("Using {} device".format(device))
 
 
+    # 1. 训练模型
     model = AlbertForMultipleChoice.from_pretrained("albert-base-v2")
-
     model.to(device)
-    # load_dataset()
     dataset = load_dataset(traning=True)
 
-    train(model, dataset,device)
+    train(model, dataset, device)
 
-    # dataset = load_dataset(traning=False)
-    # evaluate(dataset, device)
-
+    # 2. 评估模型
+    model.load_state_dict(torch.load("model.pth"))
+    dataset = load_dataset(traning=False)
+    evaluate(dataset, device, model)
 
     return 0
 
