@@ -1,9 +1,9 @@
-import glob
-import json
 import numpy as np
 import torch
 import os
 import tqdm
+import config
+from processor import RaceProcessor, select_field, simple_accuracy
 from transformers import AlbertTokenizer
 
 from transformers import *
@@ -14,18 +14,6 @@ from torch.utils.data import SequentialSampler
 
 from transformers.modeling_albert import AlbertForMultipleChoice
 
-
-def select_field(features, field):
-    return [
-        [
-            choice[field]
-            for choice in feature.choices_features
-        ]
-        for feature in features
-    ]
-
-def simple_accuracy(preds, labels):
-    return (preds == labels).mean()
 
 def convert_examples_to_features(
         examples: list,
@@ -81,92 +69,13 @@ def convert_examples_to_features(
     return features
 
 
-class InputExample:
-    """A single training/test example for multiple choice."""
-
-    def __init__(self, example_id, question, context, endings, label=None):
-        """Constructs a InputExample."""
-        self.example_id = example_id
-        self.question = question
-        self.context = context
-        self.endings = endings  # 代表四个选项
-        self.label = label
-
-
-class InputFeatures:
-    def __init__(self, example_id, choices_features, label):
-        self.example_id = example_id
-        self.choices_features = [
-            {
-                'input_ids': input_ids, # 将每个单词转换为一个ID 
-                # 由整数构成的列表，表示输入文本的token索引 eg {'hello': 0, 'world': 1}，句子"hello world"将被转换为[0, 1]。
-                'attention_mask': attention_mask, # 由0和1构成的列表，表示哪些token是填充的，哪些是真实的文本内容。eg [1, 1]。
-                'token_type_ids': token_type_ids  # 标记每个单词属于哪个句子
-            }
-            for input_ids, attention_mask, token_type_ids in choices_features
-        ]
-        self.label = label
-
-class RaceProcessor:
-    """Processor for the Race data set."""
-
-    def get_train_examples(self, data_dir):
-        """See base class."""
-        high_dir = os.path.join(data_dir, "train/high")
-        middle_dir = os.path.join(data_dir, "train/middle")
-        print("get_train_examples")
-        high_examples = self._read_data(high_dir,"train")
-        middle_examples = self._read_data(middle_dir,"train")
-        return high_examples + middle_examples
-    
-    def get_dev_examples(self, data_dir):
-        """See base class."""
-        high_dir = os.path.join(data_dir, "dev/high")
-        middle_dir = os.path.join(data_dir, "dev/middle")
-        high_examples = self._read_data(high_dir,"dev")
-        middle_examples = self._read_data(middle_dir,"dev")
-        return high_examples + middle_examples
-    
-    def get_test_examples(self, data_dir):
-        """See base class."""
-        high_dir = os.path.join(data_dir, "test/high")
-        middle_dir = os.path.join(data_dir, "test/middle")
-        high_examples = self._read_data(high_dir,"test")
-        middle_examples = self._read_data(middle_dir,"test")
-        return high_examples + middle_examples
-    
-    def _read_data(self, input_dir, set_type):
-        """Read a json file into a list of examples."""
-        examples = []
-        # 读取文件夹下所有的txt文件
-        files = glob.glob(input_dir + "/*txt")
-        # 使用tqdm显示进度条
-        for file in tqdm.tqdm(files,desc="Reading data"):
-            with open(file, "r", encoding="utf-8") as reader:
-                data_raw = json.load(reader)
-                article = data_raw['article']
-                for i in range(len(data_raw['answers'])):
-                    truth = str(ord(data_raw['answers'][i]) - ord('A'))
-                    question = data_raw['questions'][i]
-                    options = data_raw['options'][i]
-                    examples.append(
-                        InputExample(
-                            example_id = data_raw['id'],
-                            question=question,
-                            context=article,
-                            endings=[options[0], options[1], options[2], options[3]],
-                            label=truth,
-                        )
-                    )
-
-        return examples
 
 def load_dataset(traning):
-    cached_features_file = "features.pt"
+    cached_features_file = config.train_features_file
     if traning:
-        cached_features_file = "train_" + cached_features_file
+        cached_features_file = config.train_features_file
     else:
-        cached_features_file = "test_" + cached_features_file
+        cached_features_file = config.test_features_file
     # 1. 获取features
     if os.path.exists(cached_features_file):
         print("Loading features from cached file:", cached_features_file)
@@ -180,16 +89,16 @@ def load_dataset(traning):
         # 获取训练数据 返回的是InputExample对象
         # InputExample对象包含了问题、文章、选项、答案等信息
         if traning:
-            train_examples = process.get_train_examples("RACE")
+            train_examples = process.get_train_examples(config.data_dir)
         else:
-            train_examples = process.get_test_examples("RACE")
+            train_examples = process.get_test_examples(config.data_dir)
         print("Train examples: ", len(train_examples))
 
         # 获取训练标签
         label_list = ["0", "1", "2", "3"]
 
         # 使用albert tokenizer
-        tokenizer = AlbertTokenizer.from_pretrained("albert-base-v2")
+        tokenizer = AlbertTokenizer.from_pretrained(config.pretrained_model)
 
         # 将数据转换为特征
         # features是一个列表，列表中的每个元素是一个InputFeatures对象
@@ -222,15 +131,20 @@ def load_dataset(traning):
     return dataset
 
 def train(model, dataset, device):
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
 
-    batch_size = 32
+    batch_size = 4
     train_sampler = RandomSampler(dataset)
     dataloader = DataLoader(dataset, sampler=train_sampler, batch_size=batch_size)
     
     model.zero_grad()
 
     total_acc, total_count = 0, 0
+
+    
+    train_steps = len(dataset) // batch_size
+
+    print("Total steps:", train_steps)
 
     for epoch in range(2):
         print("Epoch", epoch)
@@ -294,7 +208,7 @@ def train(model, dataset, device):
             if step % 100 == 0:
                 # 保存模型
                 print("Saving model")   
-                torch.save(model.state_dict(), "model.pth")
+                torch.save(model.state_dict(), config.model_file)
 
 
             print("Step", step, "Loss", loss.item(), "Accuracy", acc)
@@ -312,10 +226,13 @@ def evaluate(dataset, device, model):
     # model.load_state_dict(torch.load("model.pth"))
 
 
-    batch_size = 4
+    batch_size = 2
     eval_sampler = SequentialSampler(dataset)
     dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=batch_size)
 
+    train_steps = len(dataset) // batch_size
+
+    print("Total steps:", train_steps)
     total_acc, total_count = 0, 0
     for step, batch in enumerate(dataloader):
         input_ids = batch[0].to(device)
@@ -347,14 +264,14 @@ def main():
 
 
     # 1. 训练模型
-    model = AlbertForMultipleChoice.from_pretrained("albert-base-v2")
+    model = AlbertForMultipleChoice.from_pretrained(config.pretrained_model)
     model.to(device)
-    dataset = load_dataset(traning=True)
+    # dataset = load_dataset(traning=True)
 
-    train(model, dataset, device)
+    # train(model, dataset, device)
 
     # 2. 评估模型
-    model.load_state_dict(torch.load("model.pth"))
+    model.load_state_dict(torch.load(config.model_file))
     dataset = load_dataset(traning=False)
     evaluate(dataset, device, model)
 
