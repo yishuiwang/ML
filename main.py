@@ -3,7 +3,7 @@ import torch
 import os
 import tqdm
 import config
-from processor import RaceProcessor, select_field, simple_accuracy
+from processor import RaceProcessor, download_dataset, select_field, simple_accuracy
 from transformers import AlbertTokenizer
 
 from transformers import *
@@ -15,7 +15,7 @@ from torch.utils.data import SequentialSampler
 from transformers.modeling_albert import AlbertForMultipleChoice
 
 
-def convert_examples_to_features(
+def transfer_to_features(
         examples: list,
         label_list: list,
         max_length: int,
@@ -103,7 +103,7 @@ def load_dataset(traning):
         # 将数据转换为特征
         # features是一个列表，列表中的每个元素是一个InputFeatures对象
         # InputFeatures对象包含了问题、文章、选项、答案等信息
-        features = convert_examples_to_features(train_examples, label_list, 512, tokenizer)
+        features = transfer_to_features(train_examples, label_list, 512, tokenizer)
 
         # 保存特征
         print("Saving features into cached file ", cached_features_file)
@@ -257,6 +257,10 @@ def evaluate(dataset, device, model):
 
     return 0
 
+def init():
+    if not os.path.exists(config.data_dir):
+        download_dataset()
+    return 0
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -276,7 +280,6 @@ def main():
     evaluate(dataset, device, model)
 
     return 0
-
 
 if __name__ == "__main__":
     main()
