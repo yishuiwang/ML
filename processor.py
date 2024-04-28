@@ -2,6 +2,8 @@ import json
 import os
 import glob
 import tqdm
+import requests
+import tarfile
 
 class InputExample:
     """A single training/test example for multiple choice."""
@@ -93,3 +95,31 @@ def select_field(features, field):
 
 def simple_accuracy(preds, labels):
     return (preds == labels).mean()
+
+def download_dataset():
+    print("Downloading the dataset...")
+    url = "http://www.cs.cmu.edu/~glai1/data/race/RACE.tar.gz"
+    target_path = 'RACE.tar.gz'
+
+    response = requests.get(url, stream=True)
+    file_size = int(response.headers.get('Content-Length', 0))
+    progress = tqdm(response.iter_content(1024), f'Downloading {target_path}', total=file_size, unit='B', unit_scale=True, unit_divisor=1024)
+
+    if response.status_code == 200:
+        with open(target_path, 'wb') as f:
+            for data in progress.iterable:
+                f.write(data)
+                progress.update(len(data))
+
+        if target_path.endswith("tar.gz"):
+            tar = tarfile.open(target_path, "r:gz")
+            tar.extractall()
+            tar.close()
+        elif target_path.endswith("tar"):
+            tar = tarfile.open(target_path, "r:")
+            tar.extractall()
+            tar.close()
+
+        os.remove(target_path)
+    else:
+        print("Failed to download the dataset. HTTP response code: ", response.status_code)
